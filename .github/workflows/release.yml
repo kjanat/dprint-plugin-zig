@@ -12,17 +12,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          fetch-tags: true
+        with: { fetch-depth: 0, fetch-tags: true }
 
       - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
+        id: setup-zig
+        with: { version: 0.15.2 }
 
       - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
+        id: setup-deno
+        with: { deno-version: v2.x }
 
       - name: Run tests
         run: zig build test
@@ -33,7 +31,7 @@ jobs:
       - name: Generate release notes
         run: |
           git fetch origin --tags --force
-          deno run -A scripts/generate_release_notes.ts ${{ github.ref_name }} > release_notes.md
+          deno run -A scripts/generate_release_notes.ts "$GITHUB_REF_NAME" > release_notes.md
 
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v6
@@ -59,26 +57,11 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - name: Download plugin artifact
-        uses: actions/download-artifact@v7
-        with:
-          name: plugin
-          path: ts/
-
-      - name: Prepare JSR package
-        run: jq '.version = "${{ github.ref_name }}"' ts/jsr.json > tmp.json && mv tmp.json ts/jsr.json
+        id: setup-deno
+        with: { deno-version: v2.x }
 
       - name: Publish to JSR
-        run: |
-          cd ts
-          if deno publish --dry-run --allow-dirty 2>&1 | grep -q "already exists"; then
-            echo "::warning::Version ${{ github.ref_name }} is already on jsr"
-          else
-            deno publish --allow-dirty
-          fi
+        run: deno run -A scripts/publish_jsr.ts
 
   publish-npm:
     needs: build
@@ -89,24 +72,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+      - uses: denoland/setup-deno@v2
+        id: setup-deno
+        with: { deno-version: v2.x }
 
-      - name: Update npm
+      - uses: actions/setup-node@v6
+        id: setup-node
+        with: { node-version: 22, registry-url: https://registry.npmjs.org }
+
+      - name: Update npm # OIDC provenance requires npm 11.5.1+
         run: npm i -g npm@latest
 
-      - name: Download plugin artifact
-        uses: actions/download-artifact@v7
-        with:
-          name: plugin
-          path: ts/
-
-      - name: Prepare npm package
-        run: cd ts && npm version ${{ github.ref_name }} --no-git-tag-version
-
-      - name: Publish to npm
-        run: cd ts && npx -y can-npm-publish && npm publish --access public --provenance || echo "::warning::Version ${{ github.ref_name }} is already on npm"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to NPM
+        run: deno run -A scripts/publish_npm.ts
+        # env: # Turned off as we are using OIDC for authentication
+        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

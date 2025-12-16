@@ -413,3 +413,9 @@ packages/jsr.json
 packages/mod.js
 packages/mod.d.ts
 *.wasm
+
+# Copied during publish (symlinks don't work with npm)
+!ts/README.md
+ts/LICENSE
+*.local.md
+*.local.json

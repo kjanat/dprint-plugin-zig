@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 
 // =============================================================================
 // Build Configuration
@@ -90,20 +91,17 @@ fn buildParseErrorMessage(
     return try list.toOwnedSlice(allocator);
 }
 
+/// Empty diagnostics array (dprint expects array of {propertyName, message} objects)
+const DIAG_EMPTY: []const u8 = "[]";
+
 fn diagnosticsForConfig(bytes: []const u8, allocator: std.mem.Allocator) []const u8 {
-    const empty_array = "[]";
-    const invalid_json = "[\"Invalid JSON override config\"]";
-    const unknown = "[\"Unknown configuration properties are not supported\"]";
-
-    if (bytes.len == 0) return empty_array;
-
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, bytes, .{}) catch return invalid_json;
-    defer parsed.deinit();
-
-    return switch (parsed.value) {
-        .object => |obj| if (obj.count() == 0) empty_array else unknown,
-        else => unknown,
-    };
+    // This plugin has no configuration options - Zig enforces a single style.
+    // We silently accept all config since dprint passes global settings too.
+    // If we wanted to warn about plugin-specific settings, we'd need to filter
+    // out global keys (lineWidth, indentWidth, useTabs, newLineKind, etc.)
+    _ = bytes;
+    _ = allocator;
+    return DIAG_EMPTY;
 }
 
 // =============================================================================
@@ -135,8 +133,8 @@ fn comptimeJsonLen(comptime value: anytype) usize {
 /// Plugin information reported to dprint host.
 /// Field names use camelCase to match dprint's expected JSON schema.
 const PluginInfo = struct {
-    name: []const u8 = "dprint-plugin-zig",
-    version: []const u8 = "0.2.1",
+    name: []const u8 = build_options.name,
+    version: []const u8 = build_options.version,
     configKey: []const u8 = "zig",
     fileExtensions: []const []const u8 = &.{ "zig", "zon" },
     fileNames: []const []const u8 = &.{},
@@ -178,6 +176,29 @@ const FILE_MATCHING_JSON: []const u8 = file_matching_info.toJson();
 const LICENSE_TEXT: []const u8 = @embedFile("LICENSE");
 
 // =============================================================================
+// dprint Host Imports (declared for WASM linking, even if unused)
+// =============================================================================
+
+// These extern functions are provided by the dprint host runtime.
+// They must be declared for the WASM module to link correctly.
+const host = if (is_wasm) struct {
+    extern "dprint" fn host_write_buffer(ptr: u32) void;
+    extern "dprint" fn host_format(
+        file_path_ptr: u32,
+        file_path_len: u32,
+        range_start: u32,
+        range_end: u32,
+        override_cfg_ptr: u32,
+        override_cfg_len: u32,
+        file_bytes_ptr: u32,
+        file_bytes_len: u32,
+    ) u32;
+    extern "dprint" fn host_get_formatted_text() u32;
+    extern "dprint" fn host_get_error_text() u32;
+    extern "dprint" fn host_has_cancelled() u32;
+} else struct {};
+
+// =============================================================================
 // Wasm Runtime (only compiled for wasm32 target)
 // =============================================================================
 
@@ -190,6 +211,7 @@ const WasmRuntime = if (is_wasm) struct {
     var heap_base: [*]u8 = undefined;
     var heap_end: [*]u8 = undefined;
     var heap_ptr: [*]u8 = undefined;
+    var heap_reset_point: [*]u8 = undefined; // Reset point after persistent allocations
     var heap_initialized: bool = false;
 
     // Shared buffer for host communication
@@ -202,11 +224,11 @@ const WasmRuntime = if (is_wasm) struct {
     var override_config: []u8 = &.{};
     var formatted_output: []u8 = &.{};
     var error_message: []u8 = &.{};
-    var original_source: []u8 = &.{};
 
     // Config registry (supports up to 16 concurrent configs)
     const MAX_CONFIGS: usize = 16;
     var config_registered: [MAX_CONFIGS]bool = [_]bool{false} ** MAX_CONFIGS;
+    var config_json: [MAX_CONFIGS][]const u8 = [_][]const u8{&.{}} ** MAX_CONFIGS;
 
     // -------------------------------------------------------------------------
     // Heap Allocator
@@ -217,6 +239,7 @@ const WasmRuntime = if (is_wasm) struct {
         heap_base = @ptrFromInt(current_pages * WASM_PAGE_SIZE);
         heap_end = heap_base;
         heap_ptr = heap_base;
+        heap_reset_point = heap_base;
 
         // Grow initial heap
         _ = @wasmMemoryGrow(0, INITIAL_HEAP_PAGES);
@@ -263,6 +286,8 @@ const WasmRuntime = if (is_wasm) struct {
             const new_buf = allocSlice(size) orelse return false;
             shared_buffer = new_buf;
             shared_buffer_capacity = size;
+            // Update reset point to preserve shared buffer
+            heap_reset_point = heap_ptr;
         }
         return true;
     }
@@ -305,16 +330,36 @@ const WasmRuntime = if (is_wasm) struct {
     // -------------------------------------------------------------------------
 
     fn registerConfig(config_id: ConfigId) void {
-        if (config_id < MAX_CONFIGS) {
-            config_registered[config_id] = true;
+        ensureInitialized();
+        if (config_id >= MAX_CONFIGS) return;
+
+        // Store config JSON from buffer (host writes before calling register_config)
+        const content = getBufferContent();
+        if (content.len > 0) {
+            const buf = allocSlice(content.len) orelse return;
+            @memcpy(buf, content);
+            config_json[config_id] = buf;
         }
+
+        // Only mark registered after successful setup
+        config_registered[config_id] = true;
+        // Move reset point forward to preserve config allocation
+        heap_reset_point = heap_ptr;
     }
 
     fn releaseConfig(config_id: ConfigId) void {
         if (config_id < MAX_CONFIGS) {
             config_registered[config_id] = false;
+            config_json[config_id] = &.{};
         }
         clearPerConfigState();
+    }
+
+    fn getConfigJson(config_id: ConfigId) []const u8 {
+        if (config_id < MAX_CONFIGS) {
+            return config_json[config_id];
+        }
+        return &.{};
     }
 
     // -------------------------------------------------------------------------
@@ -368,14 +413,6 @@ const WasmRuntime = if (is_wasm) struct {
             return .no_change;
         }
 
-        // Store original for comparison
-        const src_copy = allocSlice(source.len) orelse {
-            setErrorMessage("Out of memory");
-            return .@"error";
-        };
-        @memcpy(src_copy, source);
-        original_source = src_copy;
-
         // Use std.heap.wasm_allocator for AST operations (Zig 0.15+ API)
         const allocator = std.heap.wasm_allocator;
 
@@ -413,6 +450,11 @@ const WasmRuntime = if (is_wasm) struct {
         };
         defer allocator.free(rendered);
 
+        // Check if content changed - compare directly against input source
+        if (rendered.len == source.len and std.mem.eql(u8, source, rendered)) {
+            return .no_change;
+        }
+
         // Store formatted output
         const output_buf = allocSlice(rendered.len) orelse {
             setErrorMessage("Out of memory");
@@ -420,13 +462,6 @@ const WasmRuntime = if (is_wasm) struct {
         };
         @memcpy(output_buf, rendered);
         formatted_output = output_buf;
-
-        // Check if content changed
-        if (rendered.len == original_source.len and
-            std.mem.eql(u8, original_source, rendered))
-        {
-            return .no_change;
-        }
 
         return .changed;
     }
@@ -446,7 +481,10 @@ const WasmRuntime = if (is_wasm) struct {
     fn resetPerRequestState() void {
         formatted_output = &.{};
         error_message = &.{};
-        original_source = &.{};
+        file_path = &.{}; // Host re-sends before format()
+        override_config = &.{}; // Host re-sends before format()
+        // Arena-style reset: reclaim heap memory but preserve shared buffer + configs
+        heap_ptr = heap_reset_point;
     }
 } else struct {
     // Stub for non-wasm builds (allows tests to compile)
@@ -500,12 +538,13 @@ export fn release_config(config_id: ConfigId) void {
 }
 
 /// Get configuration diagnostics as JSON array
-export fn get_config_diagnostics(_: ConfigId) ByteLength {
+export fn get_config_diagnostics(config_id: ConfigId) ByteLength {
     if (comptime !is_wasm) return 0;
 
-    const buf = WasmRuntime.getBufferContent();
+    // Use stored config JSON (saved during register_config)
+    const config_bytes = WasmRuntime.getConfigJson(config_id);
     const allocator = std.heap.wasm_allocator;
-    const diag = diagnosticsForConfig(buf, allocator);
+    const diag = diagnosticsForConfig(config_bytes, allocator);
     if (!WasmRuntime.writeToBuffer(diag)) return 0;
     return @intCast(diag.len);
 }
@@ -705,12 +744,13 @@ test "resolveModeFromPath chooses zon for .zon" {
     try std.testing.expectEqual(std.zig.Ast.Mode.zig, resolveModeFromPath("file.zig"));
 }
 
-test "diagnosticsForConfig handles empty, invalid, and unknown" {
+test "diagnosticsForConfig always returns empty (no config options)" {
     const allocator = std.testing.allocator;
-    try std.testing.expectEqualStrings("[]", diagnosticsForConfig("", allocator));
-    try std.testing.expectEqualStrings("[\"Invalid JSON override config\"]", diagnosticsForConfig("{", allocator));
-    try std.testing.expectEqualStrings("[\"Unknown configuration properties are not supported\"]", diagnosticsForConfig("{\"x\":1}", allocator));
-    try std.testing.expectEqualStrings("[]", diagnosticsForConfig("{}", allocator));
+    // Plugin has no config options, so always returns empty diagnostics
+    try std.testing.expectEqualStrings(DIAG_EMPTY, diagnosticsForConfig("", allocator));
+    try std.testing.expectEqualStrings(DIAG_EMPTY, diagnosticsForConfig("{", allocator));
+    try std.testing.expectEqualStrings(DIAG_EMPTY, diagnosticsForConfig("{\"x\":1}", allocator));
+    try std.testing.expectEqualStrings(DIAG_EMPTY, diagnosticsForConfig("{}", allocator));
 }
 
 test "buildParseErrorMessage reports line and column" {

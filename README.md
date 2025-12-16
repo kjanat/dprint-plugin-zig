@@ -1,13 +1,13 @@
-# dprint-plugin-zig
+# [dprint-plugin-zig][repo]
 
 [![Release][badge:ci:release]][actions:release] [![JSR][badge:jsr]][jsr]
 [![npm][badge:npm]][npm]
 
 A [dprint][dprint] formatting plugin for Zig, written in Zig.
 
-Wraps Zig's built-in `std.zig.Ast` formatter in a tiny (~140KB) WebAssembly
-module, giving you the official Zig formatting style through dprint's unified
-interface.
+Wraps Zig's built-in [`std.zig.Ast`][zig:std.Ast] formatter in a tiny (~200KB)
+WebAssembly module, giving you the official Zig formatting style through
+dprint's unified interface.
 
 ## Installation
 
@@ -37,7 +37,7 @@ dprint fmt "**/*.zig"
 - **Consistent formatting** - Same output as `zig fmt`
 - **Unified tooling** - One formatter for Zig, TypeScript, JSON, Markdown, etc.
 - **Fast** - Native Wasm execution, no external process spawning
-- **Tiny** - ~140KB plugin size
+- **Tiny** - ~200KB plugin size
 
 ## File Types
 
@@ -68,3 +68,5 @@ See [CONTRIBUTING][contributing] for build instructions and development info.
 [jsr]: https://jsr.io/@kjanat/dprint-zig
 [license]: https://github.com/kjanat/dprint-plugin-zig/blob/master/LICENSE
 [npm]: https://www.npmjs.com/package/@kjanat/dprint-zig
+[repo]: https://github.com/kjanat/dprint-plugin-zig "Go to: GitHub repository"
+[zig:std.Ast]: https://ziglang.org/documentation/master/std/#std.zig.Ast

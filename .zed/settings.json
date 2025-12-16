@@ -1,22 +1,31 @@
 {
   "auto_install_extensions": {
     "biome": true,
-    "dprint": false,
+    "dprint": true,
     "ruff": true,
     "tsgo": true,
     "ty": true
   },
-  "formatter": {
-    "external": {
-      "command": "dprint",
-      "arguments": [
-        "fmt",
-        "--stdin",
-        "{buffer_path}"
-      ]
+  "formatter": [
+    // { "language_server": { "name": "dprint" } },
+    {
+      "external": {
+        "command": "dprint",
+        "arguments": ["fmt", "--stdin", "{buffer_path}"]
+      }
     }
+  ],
+  "file_types": {
+    "GitHub Actions": [
+      ".github/workflows/*.yml",
+      ".github/workflows/*.yaml"
+    ]
   },
   "lsp": {
+    "dprint": {
+      "settings": {},
+      "enable_lsp_tasks": true
+    },
     "deno": {
       "settings": {
         "deno": {
@@ -24,6 +33,9 @@
         }
       },
       "enable_lsp_tasks": true
+    },
+    "gh-actions-language-server": {
+      "initialization_options": { "sessionToken": "" }
     },
     "json-language-server": {
       "settings": {
@@ -35,7 +47,7 @@
             },
             {
               "fileMatch": ["deno.json", "deno.jsonc"],
-              "url": "https://cdn.jsdelivr.net/gh/denoland/deno@refs/heads/main/cli/schemas/config-file.v1.json"
+              "url": "https://raw.githubusercontent.com/denoland/deno/refs/heads/main/cli/schemas/config-file.v1.json"
             },
             {
               "fileMatch": ["package.json"],
@@ -132,17 +144,26 @@
   "languages": {
     "TypeScript": {
       "language_servers": [
-        "deno"
+        "deno",
+        "!typescript-language-server",
+        "!vtsls",
+        "!eslint"
       ]
     },
     "TSX": {
       "language_servers": [
-        "deno"
+        "deno",
+        "!typescript-language-server",
+        "!vtsls",
+        "!eslint"
       ]
     },
     "JavaScript": {
       "language_servers": [
-        "deno"
+        "deno",
+        "!typescript-language-server",
+        "!vtsls",
+        "!eslint"
       ]
     }
   }

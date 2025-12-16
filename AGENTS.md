@@ -33,3 +33,9 @@
 - Target: `wasm32-freestanding` with `entry = .disabled`, `rdynamic = true`
 - Implements dprint Wasm Plugin Schema v4 (16 exports)
 - Uses `std.zig.Ast` for parsing/formatting
+
+## Git
+
+- Tag versions are not prefixed by `v`, so fmt == e.g. `0.1.4`
+- All commits, as well as tags, have to have descriptions/annotations.
+- Use conventional commit format.

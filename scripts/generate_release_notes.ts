@@ -1,5 +1,17 @@
-// deno-lint-ignore no-import-prefix
-import { generateChangeLog } from "https://cdn.jsdelivr.net/gh/dprint/automation@main/changelog.ts";
+/**
+ * @module
+ * Generates GitHub release notes for dprint-plugin-zig.
+ *
+ * Uses dprint's changelog automation to generate markdown-formatted
+ * release notes including changes, install instructions, and links.
+ *
+ * @example Usage
+ * ```sh
+ * deno run -A scripts/generate_release_notes.ts 0.2.1 > release_notes.md
+ * ```
+ */
+
+import { generateChangeLog } from "changelog";
 
 const plugin = "kjanat/zig";
 
@@ -38,12 +50,13 @@ function getMdText(url: string, version: string): string {
 }`;
 }
 
-const version = Deno.args[0];
-const changelog = await generateChangeLog({
-  versionTo: version,
-});
+if (import.meta.main) {
+  const version = Deno.args[0];
+  const changelog = await generateChangeLog({
+    versionTo: version,
+  });
 
-const text = `## Changes
+  const text = `## Changes
 
 ${changelog}
 
@@ -54,8 +67,8 @@ ${changelog}
 Then in your project's dprint configuration file:
 
 1. Specify the plugin url in the ${mdCode("plugins")} array (or run ${
-  mdCode(`dprint config add ${plugin}`)
-}).
+    mdCode(`dprint config add ${plugin}`)
+  }).
 2. Add a ${mdCode("zig")} configuration property if desired.
 
 ${mdCodeBlock(getMdText(URLS.pluginBase, version), "jsonc", "   ")}
@@ -66,4 +79,5 @@ ${mdCodeBlock(getMdText(URLS.pluginBase, version), "jsonc", "   ")}
 * [npm package](${URLS.npmPackage})
 `;
 
-console.log(text);
+  console.log(text);
+}

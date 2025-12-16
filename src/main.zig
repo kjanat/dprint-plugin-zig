@@ -65,12 +65,12 @@ fn comptimeJsonLen(comptime value: anytype) usize {
 /// Field names use camelCase to match dprint's expected JSON schema.
 const PluginInfo = struct {
     name: []const u8 = "dprint-plugin-zig",
-    version: []const u8 = "0.1.0",
+    version: []const u8 = "0.1.1",
     configKey: []const u8 = "zig",
     fileExtensions: []const []const u8 = &.{ "zig", "zon" },
     fileNames: []const []const u8 = &.{},
     helpUrl: []const u8 = "https://github.com/kjanat/dprint-plugin-zig",
-    configSchemaUrl: []const u8 = "",
+    configSchemaUrl: []const u8 = "https://github.com/kjanat/dprint-plugin-zig/releases/latest/download/schema.json",
 
     /// Serialize to JSON at comptime
     pub fn toJson(comptime self: PluginInfo) []const u8 {
@@ -462,7 +462,7 @@ test "PluginInfo JSON is valid and contains required fields" {
 
     // Verify the parsed values match our constants
     try std.testing.expectEqualStrings("dprint-plugin-zig", parsed.value.name);
-    try std.testing.expectEqualStrings("0.1.0", parsed.value.version);
+    try std.testing.expectEqualStrings(plugin_info.version, parsed.value.version);
     try std.testing.expectEqualStrings("zig", parsed.value.configKey);
     try std.testing.expectEqual(@as(usize, 2), parsed.value.fileExtensions.len);
     try std.testing.expectEqualStrings("zig", parsed.value.fileExtensions[0]);

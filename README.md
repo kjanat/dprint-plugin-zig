@@ -1,6 +1,6 @@
 # dprint-plugin-zig
 
-A [dprint](https://dprint.dev/) formatting plugin for Zig, written in Zig.
+A [dprint][dprint] formatting plugin for Zig, written in Zig.
 
 Uses Zig's built-in `std.zig.Ast` parser and renderer to provide consistent
 formatting through dprint.
@@ -11,8 +11,9 @@ Add to your `dprint.json`:
 
 ```json
 {
+  "zig": {},
   "plugins": [
-    "https://plugins.dprint.dev/kjanat/zig-0.1.0.wasm"
+    "https://plugins.dprint.dev/kjanat/zig-<VERSION>.wasm"
   ]
 }
 ```
@@ -22,6 +23,7 @@ Add to your `dprint.json`:
 
 ```json
 {
+  "zig": {},
   "plugins": [
     "./zig-out/bin/plugin.wasm"
   ]
@@ -63,8 +65,8 @@ The plugin will be output to `zig-out/bin/plugin.wasm`.
 
 ## Configuration
 
-Currently no configuration options. The plugin uses Zig's default formatting
-rules.
+Currently no configuration options.\
+The plugin uses Zig's default formatting rules.
 
 ## How It Works
 
@@ -89,5 +91,6 @@ Matches files with:
 
 [LICENSE]: https://github.com/kjanat/dprint-plugin-zig/blob/master/LICENSE
 [dprint-v4]: https://github.com/dprint/dprint/blob/main/docs/wasm-plugin-development.md
+[dprint]: https://dprint.dev/
 
 <!-- markdownlint-disable-file MD033 -->

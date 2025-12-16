@@ -11,49 +11,26 @@
       "command": "dprint",
       "arguments": [
         "fmt",
-        "--config",
-        "dprint.jsonc",
         "--stdin",
         "{buffer_path}"
       ]
     }
   },
   "languages": {
-    "Python": {
-      "language_servers": ["ruff", "ty", "!pylsp", "..."],
-      "code_actions_on_format": {
-        // Organize imports
-        "source.organizeImports.ruff": true,
-        // Fix all auto-fixable lint violations
-        "source.fixAll.ruff": true
-      }
-    },
     "TypeScript": {
       "language_servers": [
-        "deno",
-        "!typescript-language-server",
-        "!vtsls",
-        "!eslint"
-      ],
-      "formatter": "language_server"
+        "deno"
+      ]
     },
     "TSX": {
       "language_servers": [
-        "deno",
-        "!typescript-language-server",
-        "!vtsls",
-        "!eslint"
-      ],
-      "formatter": "language_server"
+        "deno"
+      ]
     },
     "JavaScript": {
       "language_servers": [
-        "deno",
-        "!typescript-language-server",
-        "!vtsls",
-        "!eslint"
-      ],
-      "formatter": "language_server"
+        "deno"
+      ]
     }
   },
   "lsp": {

@@ -1,4 +1,5 @@
-import { generateChangeLog } from "changelog";
+// deno-lint-ignore no-import-prefix
+import { generateChangeLog } from "https://cdn.jsdelivr.net/gh/dprint/automation@main/changelog.ts";
 
 const plugin = "kjanat/zig";
 
@@ -14,8 +15,17 @@ function mdCode(snippet: string): string {
   return `\`${snippet}\``;
 }
 
-function mdCodeBlock(snippet: string, language: string = ""): string {
-  return `${"```"}${language}\n${snippet}\n${"```"}`;
+function mdCodeBlock(
+  snippet: string,
+  language: string = "",
+  indent: string = "",
+): string {
+  const indentedSnippet = snippet
+    .split("\n")
+    .map((line) => indent + line)
+    .join("\n");
+  const fence = "```";
+  return `${indent}${fence}${language}\n${indentedSnippet}\n${indent}${fence}`;
 }
 
 function getMdText(url: string, version: string): string {
@@ -48,7 +58,7 @@ Then in your project's dprint configuration file:
 }).
 2. Add a ${mdCode("zig")} configuration property if desired.
 
-   ${mdCodeBlock(getMdText(URLS.pluginBase, version), "jsonc")}
+${mdCodeBlock(getMdText(URLS.pluginBase, version), "jsonc", "   ")}
 
 ## JS Formatting API
 

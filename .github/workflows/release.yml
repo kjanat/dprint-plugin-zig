@@ -14,6 +14,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - uses: mlugg/setup-zig@v2
         with:
@@ -31,6 +32,7 @@ jobs:
 
       - name: Generate release notes
         run: |
+          git fetch origin --tags --force
           deno run -A scripts/generate_release_notes.ts ${{ github.ref_name }} > release_notes.md
 
       - name: Upload plugin artifact
@@ -72,10 +74,10 @@ jobs:
       - name: Publish to JSR
         run: |
           cd ts
-          if deno publish --dry-run 2>&1 | grep -q "already exists"; then
+          if deno publish --dry-run --allow-dirty 2>&1 | grep -q "already exists"; then
             echo "::warning::Version ${{ github.ref_name }} is already on jsr"
           else
-            deno publish
+            deno publish --allow-dirty
           fi
 
   publish-npm:

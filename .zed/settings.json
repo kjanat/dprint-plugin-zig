@@ -16,30 +16,14 @@
       ]
     }
   },
-  "languages": {
-    "TypeScript": {
-      "language_servers": [
-        "deno"
-      ]
-    },
-    "TSX": {
-      "language_servers": [
-        "deno"
-      ]
-    },
-    "JavaScript": {
-      "language_servers": [
-        "deno"
-      ]
-    }
-  },
   "lsp": {
     "deno": {
       "settings": {
         "deno": {
           "enable": true
         }
-      }
+      },
+      "enable_lsp_tasks": true
     },
     "json-language-server": {
       "settings": {
@@ -143,6 +127,23 @@
           }
         }
       }
+    }
+  },
+  "languages": {
+    "TypeScript": {
+      "language_servers": [
+        "deno"
+      ]
+    },
+    "TSX": {
+      "language_servers": [
+        "deno"
+      ]
+    },
+    "JavaScript": {
+      "language_servers": [
+        "deno"
+      ]
     }
   }
 }

@@ -402,4 +402,14 @@ $RECYCLE.BIN/
 *:Zone.Identifier
 
 # End of https://gitignore.kjanat.com/api/node,zig,python,linux,macos,windows
+
+# Reference repos (gitignored)
 js-formatter
+automation
+
+# Generated during CI (not committed)
+packages/package.json
+packages/jsr.json
+packages/mod.js
+packages/mod.d.ts
+*.wasm

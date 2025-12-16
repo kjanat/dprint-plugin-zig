@@ -17,4 +17,4 @@ import { join } from "node:path";
  * Gets the path to the Wasm module.
  * @returns {string}
  */
-export const getPath = () => join(import.meta.dirname, "plugin.wasm");
+export const getPath = (): string => join(import.meta.dirname!, "plugin.wasm");

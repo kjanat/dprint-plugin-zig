@@ -1,18 +1,13 @@
 {
-  "name": "dprint-plugin-zig",
-  "version": "0.1.0",
-  "license": "MIT",
-  "publish": {
-    "include": [],
-    "exclude": []
+  "imports": {
+    "changelog": "https://cdn.jsdelivr.net/gh/dprint/automation@main/changelog.ts",
+    "sort-package-json": "npm:sort-package-json@^3.6.0"
   },
   "tasks": {
     "fmt": {
       "command": "dprint fmt",
       "description": "Format using dprint"
     }
-  },
-  "imports": {
-    "changelog": "https://cdn.jsdelivr.net/gh/dprint/automation@main/changelog.ts"
   }
 }
+

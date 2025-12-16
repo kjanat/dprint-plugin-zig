@@ -136,7 +136,7 @@ fn comptimeJsonLen(comptime value: anytype) usize {
 /// Field names use camelCase to match dprint's expected JSON schema.
 const PluginInfo = struct {
     name: []const u8 = "dprint-plugin-zig",
-    version: []const u8 = "0.1.2",
+    version: []const u8 = "0.2.0",
     configKey: []const u8 = "zig",
     fileExtensions: []const []const u8 = &.{ "zig", "zon" },
     fileNames: []const []const u8 = &.{},

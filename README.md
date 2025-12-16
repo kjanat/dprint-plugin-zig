@@ -21,7 +21,7 @@ Or manually add to your `dprint.json`:
 {
   "zig": {},
   "plugins": [
-    "https://plugins.dprint.dev/kjanat/zig-0.1.2.wasm"
+    "https://plugins.dprint.dev/kjanat/zig-0.2.0.wasm"
   ]
 }
 ```

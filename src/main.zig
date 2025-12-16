@@ -69,7 +69,7 @@ fn buildParseErrorMessage(
     token_starts: []const u32,
     errors: []const std.zig.Ast.Error,
 ) ![]u8 {
-    var list = std.ArrayList(u8).initCapacity(allocator, errors.len * 32) catch return error.OutOfMemory;
+    var list = try std.ArrayList(u8).initCapacity(allocator, errors.len * 32);
     defer list.deinit(allocator);
 
     const path = if (file_path.len > 0) file_path else "<unknown>";
@@ -87,7 +87,7 @@ fn buildParseErrorMessage(
         idx += 1;
     }
 
-    return list.toOwnedSlice(allocator);
+    return try list.toOwnedSlice(allocator);
 }
 
 fn diagnosticsForConfig(bytes: []const u8, allocator: std.mem.Allocator) []const u8 {

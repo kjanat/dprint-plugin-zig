@@ -1,0 +1,36 @@
+{
+  "name": "@kjanat/dprint-zig",
+  "version": "0.0.0",
+  "description": "Wasm module for dprint-plugin-zig.",
+  "keywords": [
+    "code",
+    "dprint",
+    "formatter",
+    "zig"
+  ],
+  "homepage": "https://github.com/kjanat/dprint-plugin-zig#readme",
+  "bugs": {
+    "url": "https://github.com/kjanat/dprint-plugin-zig/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kjanat/dprint-plugin-zig.git",
+    "directory": "ts"
+  },
+  "license": "MIT",
+  "author": "Kaj Kowalski <dev@kajkowalski.nl>",
+  "type": "module",
+  "main": "./mod.js",
+  "types": "./mod.d.ts",
+  "files": [
+    "mod.js",
+    "mod.d.ts",
+    "plugin.wasm",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.16"
+  }
+}
+

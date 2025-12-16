@@ -8,13 +8,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
       - name: Run tests
         run: zig build test
@@ -22,10 +29,82 @@ jobs:
       - name: Build plugin (ReleaseSmall)
         run: zig build -Doptimize=ReleaseSmall
 
-      - name: Create release
+      - name: Generate release notes
+        run: |
+          deno run -A scripts/generate_release_notes.ts ${{ github.ref_name }} > release_notes.md
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: plugin
+          path: zig-out/bin/plugin.wasm
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             zig-out/bin/plugin.wasm
             schema.json
-          generate_release_notes: true
+          body_path: release_notes.md
+
+  publish-jsr:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Download plugin artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: plugin
+          path: ts/
+
+      - name: Prepare JSR package
+        run: jq '.version = "${{ github.ref_name }}"' ts/jsr.json > tmp.json && mv tmp.json ts/jsr.json
+
+      - name: Publish to JSR
+        run: |
+          cd ts
+          if deno publish --dry-run 2>&1 | grep -q "already exists"; then
+            echo "::warning::Version ${{ github.ref_name }} is already on jsr"
+          else
+            deno publish
+          fi
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Update npm
+        run: npm i -g npm@latest
+
+      - name: Download plugin artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: plugin
+          path: ts/
+
+      - name: Prepare npm package
+        run: cd ts && npm version ${{ github.ref_name }} --no-git-tag-version
+
+      - name: Publish to npm
+        run: cd ts && npx -y can-npm-publish && npm publish --access public --provenance || echo "::warning::Version ${{ github.ref_name }} is already on npm"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

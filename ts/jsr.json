@@ -1,0 +1,15 @@
+{
+  "name": "@kjanat/dprint-zig",
+  "version": "0.0.0",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "publish": {
+    "include": [
+      "LICENSE",
+      "README.md",
+      "jsr.json",
+      "mod.ts",
+      "plugin.wasm"
+    ]
+  }
+}

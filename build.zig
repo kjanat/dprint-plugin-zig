@@ -11,7 +11,8 @@ pub fn build(b: *std.Build) void {
     const wasm_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = wasm_target,
-        .optimize = optimize,
+        .optimize = .ReleaseSmall,
+        .strip = true,
     });
 
     const wasm = b.addExecutable(.{

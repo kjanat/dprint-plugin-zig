@@ -29,40 +29,38 @@
       }
     },
     "TypeScript": {
-      "language_servers": ["biome", "vtsls", "!deno", "!oxc"], // "tsgo",
-      "code_actions_on_format": {
-        "source.fixAll.biome": false,
-        "source.organizeImports.biome": false
-      }
+      "language_servers": [
+        "deno",
+        "!typescript-language-server",
+        "!vtsls",
+        "!eslint"
+      ],
+      "formatter": "language_server"
     },
     "TSX": {
-      "language_servers": ["biome", "vtsls", "!deno", "!oxc"], // "tsgo",
-      "code_actions_on_format": {
-        "source.fixAll.biome": false,
-        "source.organizeImports.biome": false
-      }
+      "language_servers": [
+        "deno",
+        "!typescript-language-server",
+        "!vtsls",
+        "!eslint"
+      ],
+      "formatter": "language_server"
     },
     "JavaScript": {
-      "language_servers": ["biome", "vtsls", "!deno", "!oxc"], // "tsgo",
-      "code_actions_on_format": {
-        "source.fixAll.biome": false,
-        "source.organizeImports.biome": false
-      }
+      "language_servers": [
+        "deno",
+        "!typescript-language-server",
+        "!vtsls",
+        "!eslint"
+      ],
+      "formatter": "language_server"
     }
   },
   "lsp": {
-    "biome": {
-      "binary": {
-        "path": "./node_modules/.bin/biome",
-        "arguments": ["lsp-proxy"]
-      },
-      "settings": { "require_config_file": true },
-      "enable_lsp_tasks": true,
-      "initialization_options": {
-        "assist": {
-          "organizeImports": {
-            "enable": false
-          }
+    "deno": {
+      "settings": {
+        "deno": {
+          "enable": true
         }
       }
     },

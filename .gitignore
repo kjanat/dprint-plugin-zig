@@ -402,3 +402,4 @@ $RECYCLE.BIN/
 *:Zone.Identifier
 
 # End of https://gitignore.kjanat.com/api/node,zig,python,linux,macos,windows
+js-formatter

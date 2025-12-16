@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const wasm = b.addExecutable(.{
-        .name = "dprint-plugin-zig",
+        .name = "plugin",
         .root_module = wasm_module,
     });
 

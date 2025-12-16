@@ -12,18 +12,18 @@ Add to your `dprint.json`:
 ```json
 {
   "plugins": [
-    "https://github.com/kjanat/dprint-plugin-zig/releases/download/v0.1.0/dprint-plugin-zig.wasm"
+    "https://plugins.dprint.dev/kjanat/zig-0.1.0.wasm"
   ]
 }
 ```
 
-<details open>
+<details>
 <summary>Or use local build:</summary>
 
 ```json
 {
   "plugins": [
-    "./zig-out/bin/dprint-plugin-zig.wasm"
+    "./zig-out/bin/plugin.wasm"
   ]
 }
 ```
@@ -59,7 +59,7 @@ zig build -Doptimize=ReleaseSmall
 zig build test
 ```
 
-The plugin will be output to `zig-out/bin/dprint-plugin-zig.wasm`.
+The plugin will be output to `zig-out/bin/plugin.wasm`.
 
 ## Configuration
 

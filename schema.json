@@ -1,0 +1,9 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://plugins.dprint.dev/kjanat/zig/schema.json",
+  "type": "object",
+  "title": "dprint-plugin-zig Configuration",
+  "description": "Configuration for the Zig formatting plugin. Currently uses Zig's default formatting rules.",
+  "properties": {},
+  "additionalProperties": false
+}

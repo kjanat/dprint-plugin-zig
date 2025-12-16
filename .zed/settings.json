@@ -1,0 +1,173 @@
+{
+  "auto_install_extensions": {
+    "biome": true,
+    "dprint": false,
+    "ruff": true,
+    "tsgo": true,
+    "ty": true
+  },
+  "formatter": {
+    "external": {
+      "command": "dprint",
+      "arguments": [
+        "fmt",
+        "--config",
+        "dprint.jsonc",
+        "--stdin",
+        "{buffer_path}"
+      ]
+    }
+  },
+  "languages": {
+    "Python": {
+      "language_servers": ["ruff", "ty", "!pylsp", "..."],
+      "code_actions_on_format": {
+        // Organize imports
+        "source.organizeImports.ruff": true,
+        // Fix all auto-fixable lint violations
+        "source.fixAll.ruff": true
+      }
+    },
+    "TypeScript": {
+      "language_servers": ["biome", "vtsls", "!deno", "!oxc"], // "tsgo",
+      "code_actions_on_format": {
+        "source.fixAll.biome": false,
+        "source.organizeImports.biome": false
+      }
+    },
+    "TSX": {
+      "language_servers": ["biome", "vtsls", "!deno", "!oxc"], // "tsgo",
+      "code_actions_on_format": {
+        "source.fixAll.biome": false,
+        "source.organizeImports.biome": false
+      }
+    },
+    "JavaScript": {
+      "language_servers": ["biome", "vtsls", "!deno", "!oxc"], // "tsgo",
+      "code_actions_on_format": {
+        "source.fixAll.biome": false,
+        "source.organizeImports.biome": false
+      }
+    }
+  },
+  "lsp": {
+    "biome": {
+      "binary": {
+        "path": "./node_modules/.bin/biome",
+        "arguments": ["lsp-proxy"]
+      },
+      "settings": { "require_config_file": true },
+      "enable_lsp_tasks": true,
+      "initialization_options": {
+        "assist": {
+          "organizeImports": {
+            "enable": false
+          }
+        }
+      }
+    },
+    "json-language-server": {
+      "settings": {
+        "json": {
+          "schemas": [
+            {
+              "fileMatch": ["jsr.json"],
+              "url": "https://jsr.io/schema/config-file.v1.json"
+            },
+            {
+              "fileMatch": ["deno.json", "deno.jsonc"],
+              "url": "https://cdn.jsdelivr.net/gh/denoland/deno@refs/heads/main/cli/schemas/config-file.v1.json"
+            },
+            {
+              "fileMatch": ["package.json"],
+              "url": "http://json.schemastore.org/package"
+            },
+            {
+              "fileMatch": [
+                ".prettierrc",
+                ".prettierrc.json",
+                ".prettierrc.json5"
+              ],
+              "url": "https://json.schemastore.org/prettierrc.json"
+            },
+            {
+              "fileMatch": ["biome.json", "biome.jsonc", "biome.base.json"],
+              "url": "https://biomejs.dev/schemas/2.3.8/schema.json" // or "https://biomejs.dev/schemas/latest/schema.json"
+            },
+            {
+              "fileMatch": [
+                "opencode.json",
+                ".opencode.json",
+                "opencode.jsonc",
+                ".opencode.jsonc"
+              ],
+              "url": "https://opencode.ai/config.json"
+            },
+            {
+              "fileMatch": [
+                "**/.claude/settings.json",
+                "**/.claude/settings.local.json"
+              ],
+              "url": "https://json.schemastore.org/claude-code-settings.json"
+            },
+            {
+              "fileMatch": [
+                "dprint.json",
+                "dprint.jsonc",
+                ".dprint.json",
+                ".dprint.jsonc"
+              ],
+              "url": "https://dprint.dev/schemas/v0.json"
+            },
+            {
+              "fileMatch": [
+                "lefthook.json",
+                ".lefthook.json",
+                ".config/lefthook.json"
+              ],
+              "url": "https://raw.githubusercontent.com/evilmartians/lefthook/master/schema.json"
+            },
+            {
+              "fileMatch": ["tsconfig.json", "tsconfig.*.json"],
+              "url": "https://json.schemastore.org/tsconfig"
+            }
+          ]
+        }
+      }
+    },
+    "yaml-language-server": {
+      "settings": {
+        "yaml": {
+          "keyOrdering": false,
+          "format": { "singleQuote": false },
+          "validate": true,
+          "completion": true,
+          "schemas": {
+            "https://www.schemastore.org/github-workflow.json": [
+              ".github/workflows/*.yml",
+              ".github/workflows/*.yaml"
+            ],
+            "https://www.schemastore.org/github-action.json": [
+              ".github/actions/*.yml",
+              ".github/actions/*.yaml"
+            ],
+            "https://www.schemastore.org/pnpm-workspace.json": [
+              "pnpm-workspace.yaml"
+            ],
+            "https://raw.githubusercontent.com/evilmartians/lefthook/master/schema.json": [
+              "lefthook.yml",
+              ".lefthook.yml",
+              "lefthook.yaml",
+              ".lefthook.yaml"
+            ],
+            "https://json.schemastore.org/prettierrc.json": [
+              ".prettierrc",
+              ".prettierrc.yml",
+              ".prettierrc.yaml"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

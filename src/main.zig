@@ -36,58 +36,64 @@ const FormatResult = enum(u32) {
 };
 
 // =============================================================================
+// Comptime JSON Serialization
+// =============================================================================
+
+/// Serialize any value to JSON at comptime using std.json.
+/// This handles escaping, nested structures, and all JSON types correctly.
+/// Uses std.fmt.comptimePrint with std.json.fmt for Zig 0.15+ compatibility.
+fn comptimeJsonStringify(comptime value: anytype) *const [comptimeJsonLen(value)]u8 {
+    comptime {
+        @setEvalBranchQuota(10000);
+        return std.fmt.comptimePrint("{f}", .{std.json.fmt(value, .{})});
+    }
+}
+
+/// Calculate the length of JSON output at comptime
+fn comptimeJsonLen(comptime value: anytype) usize {
+    comptime {
+        @setEvalBranchQuota(10000);
+        return std.fmt.count("{f}", .{std.json.fmt(value, .{})});
+    }
+}
+
+// =============================================================================
 // Plugin Metadata
 // =============================================================================
 
+/// Plugin information reported to dprint host.
+/// Field names use camelCase to match dprint's expected JSON schema.
 const PluginInfo = struct {
     name: []const u8 = "dprint-plugin-zig",
     version: []const u8 = "0.1.0",
-    config_key: []const u8 = "zig",
-    file_extensions: []const []const u8 = &.{ "zig", "zon" },
-    file_names: []const []const u8 = &.{},
-    help_url: []const u8 = "https://github.com/kjanat/dprint-plugin-zig",
-    config_schema_url: []const u8 = "",
+    configKey: []const u8 = "zig",
+    fileExtensions: []const []const u8 = &.{ "zig", "zon" },
+    fileNames: []const []const u8 = &.{},
+    helpUrl: []const u8 = "https://github.com/kjanat/dprint-plugin-zig",
+    configSchemaUrl: []const u8 = "",
 
     /// Serialize to JSON at comptime
-    fn toJson(comptime self: PluginInfo) []const u8 {
-        comptime {
-            return "{\"name\":\"" ++ self.name ++
-                "\",\"version\":\"" ++ self.version ++
-                "\",\"configKey\":\"" ++ self.config_key ++
-                "\",\"fileExtensions\":" ++ arrayToJson(self.file_extensions) ++
-                ",\"fileNames\":" ++ arrayToJson(self.file_names) ++
-                ",\"helpUrl\":\"" ++ self.help_url ++
-                "\",\"configSchemaUrl\":\"" ++ self.config_schema_url ++ "\"}";
-        }
-    }
-
-    fn arrayToJson(comptime arr: []const []const u8) []const u8 {
-        comptime {
-            if (arr.len == 0) return "[]";
-            var result: []const u8 = "[";
-            for (arr, 0..) |item, i| {
-                if (i > 0) result = result ++ ",";
-                result = result ++ "\"" ++ item ++ "\"";
-            }
-            return result ++ "]";
-        }
+    pub fn toJson(comptime self: PluginInfo) []const u8 {
+        return comptimeJsonStringify(self);
     }
 };
 
+/// File matching configuration for a specific config ID.
+/// Used by get_config_file_matching to tell dprint which files this plugin handles.
 const FileMatchingInfo = struct {
-    file_extensions: []const []const u8 = &.{ "zig", "zon" },
-    file_names: []const []const u8 = &.{},
+    fileExtensions: []const []const u8 = &.{ "zig", "zon" },
+    fileNames: []const []const u8 = &.{},
 
     /// Serialize to JSON at comptime
-    fn toJson(comptime self: FileMatchingInfo) []const u8 {
-        comptime {
-            return "{\"fileExtensions\":" ++ PluginInfo.arrayToJson(self.file_extensions) ++
-                ",\"fileNames\":" ++ PluginInfo.arrayToJson(self.file_names) ++ "}";
-        }
+    pub fn toJson(comptime self: FileMatchingInfo) []const u8 {
+        return comptimeJsonStringify(self);
     }
 };
 
+/// Plugin metadata instance
 const plugin_info: PluginInfo = .{};
+
+/// File matching instance
 const file_matching_info: FileMatchingInfo = .{};
 
 /// Plugin info as JSON string (computed at comptime)
@@ -447,17 +453,34 @@ export fn get_config_file_matching(_: ConfigId) ByteLength {
 // Tests (native target only)
 // =============================================================================
 
-test "PluginInfo JSON generation" {
-    const json = comptime plugin_info.toJson();
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"dprint-plugin-zig\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"version\":\"0.1.0\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"configKey\":\"zig\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"fileExtensions\":[\"zig\",\"zon\"]") != null);
+test "PluginInfo JSON is valid and contains required fields" {
+    const json = PLUGIN_INFO_JSON;
+
+    // Parse the JSON to verify it's valid
+    const parsed = try std.json.parseFromSlice(PluginInfo, std.testing.allocator, json, .{});
+    defer parsed.deinit();
+
+    // Verify the parsed values match our constants
+    try std.testing.expectEqualStrings("dprint-plugin-zig", parsed.value.name);
+    try std.testing.expectEqualStrings("0.1.0", parsed.value.version);
+    try std.testing.expectEqualStrings("zig", parsed.value.configKey);
+    try std.testing.expectEqual(@as(usize, 2), parsed.value.fileExtensions.len);
+    try std.testing.expectEqualStrings("zig", parsed.value.fileExtensions[0]);
+    try std.testing.expectEqualStrings("zon", parsed.value.fileExtensions[1]);
 }
 
-test "FileMatchingInfo JSON generation" {
-    const json = comptime file_matching_info.toJson();
-    try std.testing.expectEqualStrings("{\"fileExtensions\":[\"zig\",\"zon\"],\"fileNames\":[]}", json);
+test "FileMatchingInfo JSON is valid and contains required fields" {
+    const json = FILE_MATCHING_JSON;
+
+    // Parse the JSON to verify it's valid
+    const parsed = try std.json.parseFromSlice(FileMatchingInfo, std.testing.allocator, json, .{});
+    defer parsed.deinit();
+
+    // Verify the parsed values
+    try std.testing.expectEqual(@as(usize, 2), parsed.value.fileExtensions.len);
+    try std.testing.expectEqualStrings("zig", parsed.value.fileExtensions[0]);
+    try std.testing.expectEqualStrings("zon", parsed.value.fileExtensions[1]);
+    try std.testing.expectEqual(@as(usize, 0), parsed.value.fileNames.len);
 }
 
 test "format simple zig code" {
@@ -489,4 +512,10 @@ test "format function" {
 test "LICENSE file embedded" {
     try std.testing.expect(std.mem.indexOf(u8, LICENSE_TEXT, "MIT License") != null);
     try std.testing.expect(std.mem.indexOf(u8, LICENSE_TEXT, "Kaj Kowalski") != null);
+}
+
+test "FormatResult enum values match dprint spec" {
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(FormatResult.no_change));
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(FormatResult.changed));
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(FormatResult.@"error"));
 }

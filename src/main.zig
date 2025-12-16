@@ -65,12 +65,12 @@ fn comptimeJsonLen(comptime value: anytype) usize {
 /// Field names use camelCase to match dprint's expected JSON schema.
 const PluginInfo = struct {
     name: []const u8 = "dprint-plugin-zig",
-    version: []const u8 = "0.1.1",
+    version: []const u8 = "0.1.2",
     configKey: []const u8 = "zig",
     fileExtensions: []const []const u8 = &.{ "zig", "zon" },
     fileNames: []const []const u8 = &.{},
     helpUrl: []const u8 = "https://github.com/kjanat/dprint-plugin-zig",
-    configSchemaUrl: []const u8 = "https://github.com/kjanat/dprint-plugin-zig/releases/latest/download/schema.json",
+    configSchemaUrl: []const u8 = "https://plugins.dprint.dev/kjanat/zig/latest/schema.json",
 
     /// Serialize to JSON at comptime
     pub fn toJson(comptime self: PluginInfo) []const u8 {

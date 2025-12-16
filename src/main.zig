@@ -1,75 +1,167 @@
-const std: type = @import("std");
-const builtin: type = @import("builtin");
+//! dprint plugin for Zig formatting using the Zig standard library formatter.
+//!
+//! This plugin implements dprint's Wasm Plugin Schema v4 and wraps Zig's
+//! built-in `std.zig.Ast` parser and renderer to provide consistent formatting.
+
+const std = @import("std");
+const builtin = @import("builtin");
+
+// =============================================================================
+// Build Configuration
+// =============================================================================
 
 const is_wasm: bool = builtin.cpu.arch == .wasm32;
 
 // =============================================================================
-// Constants
+// dprint Schema v4 Types
 // =============================================================================
 
-const PLUGIN_NAME = "dprint-plugin-zig";
-const PLUGIN_VERSION = "0.1.0";
-const CONFIG_KEY = "zig";
-const HELP_URL = "https://github.com/kjanat/dprint-plugin-zig";
-const LICENSE_TEXT =
-    \\MIT License
-    \\
-    \\Copyright (c) 2025 Kaj Kowalski
-    \\
-    \\Permission is hereby granted, free of charge, to any person obtaining a copy
-    \\of this software and associated documentation files (the "Software"), to deal
-    \\in the Software without restriction, including without limitation the rights
-    \\to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    \\copies of the Software, and to permit persons to whom the Software is
-    \\furnished to do so, subject to the following conditions:
-    \\
-    \\The above copyright notice and this permission notice shall be included in all
-    \\copies or substantial portions of the Software.
-    \\
-    \\THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    \\IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    \\FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    \\AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    \\LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    \\OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    \\SOFTWARE.
-;
+/// Byte length returned to host (for buffer sizes)
+const ByteLength = u32;
 
-const PLUGIN_INFO =
-    \\{"name":"
-++ PLUGIN_NAME ++
-    \\","version":"
-++ PLUGIN_VERSION ++
-    \\","configKey":"
-++ CONFIG_KEY ++
-    \\","fileExtensions":["zig","zon"],"fileNames":[],"helpUrl":"
-++ HELP_URL ++
-    \\","configSchemaUrl":""}
-;
+/// Pointer to Wasm memory buffer (mutable - host writes here)
+const WasmPtr = [*]u8;
+
+/// Configuration identifier from dprint host
+const ConfigId = u32;
+
+/// Result of a format operation
+const FormatResult = enum(u32) {
+    /// Source unchanged, no output needed
+    no_change = 0,
+    /// Source was reformatted, call get_formatted_text()
+    changed = 1,
+    /// Error occurred, call get_error_text()
+    @"error" = 2,
+};
 
 // =============================================================================
-// Wasm-specific code (only compiled for wasm32)
+// Plugin Metadata
 // =============================================================================
 
-const wasm: type = if (is_wasm) struct {
-    const WASM_PAGE_SIZE = 65536;
+const PluginInfo = struct {
+    name: []const u8 = "dprint-plugin-zig",
+    version: []const u8 = "0.1.0",
+    config_key: []const u8 = "zig",
+    file_extensions: []const []const u8 = &.{ "zig", "zon" },
+    file_names: []const []const u8 = &.{},
+    help_url: []const u8 = "https://github.com/kjanat/dprint-plugin-zig",
+    config_schema_url: []const u8 = "",
 
+    /// Serialize to JSON at comptime
+    fn toJson(comptime self: PluginInfo) []const u8 {
+        comptime {
+            return "{\"name\":\"" ++ self.name ++
+                "\",\"version\":\"" ++ self.version ++
+                "\",\"configKey\":\"" ++ self.config_key ++
+                "\",\"fileExtensions\":" ++ arrayToJson(self.file_extensions) ++
+                ",\"fileNames\":" ++ arrayToJson(self.file_names) ++
+                ",\"helpUrl\":\"" ++ self.help_url ++
+                "\",\"configSchemaUrl\":\"" ++ self.config_schema_url ++ "\"}";
+        }
+    }
+
+    fn arrayToJson(comptime arr: []const []const u8) []const u8 {
+        comptime {
+            if (arr.len == 0) return "[]";
+            var result: []const u8 = "[";
+            for (arr, 0..) |item, i| {
+                if (i > 0) result = result ++ ",";
+                result = result ++ "\"" ++ item ++ "\"";
+            }
+            return result ++ "]";
+        }
+    }
+};
+
+const FileMatchingInfo = struct {
+    file_extensions: []const []const u8 = &.{ "zig", "zon" },
+    file_names: []const []const u8 = &.{},
+
+    /// Serialize to JSON at comptime
+    fn toJson(comptime self: FileMatchingInfo) []const u8 {
+        comptime {
+            return "{\"fileExtensions\":" ++ PluginInfo.arrayToJson(self.file_extensions) ++
+                ",\"fileNames\":" ++ PluginInfo.arrayToJson(self.file_names) ++ "}";
+        }
+    }
+};
+
+const plugin_info: PluginInfo = .{};
+const file_matching_info: FileMatchingInfo = .{};
+
+/// Plugin info as JSON string (computed at comptime)
+const PLUGIN_INFO_JSON: []const u8 = plugin_info.toJson();
+
+/// File matching info as JSON string (computed at comptime)
+const FILE_MATCHING_JSON: []const u8 = file_matching_info.toJson();
+
+/// License text embedded from LICENSE file
+const LICENSE_TEXT: []const u8 = @embedFile("LICENSE");
+
+// =============================================================================
+// Wasm Runtime (only compiled for wasm32 target)
+// =============================================================================
+
+const WasmRuntime = if (is_wasm) struct {
+    const Self = @This();
+    const WASM_PAGE_SIZE: usize = 65536;
+    const INITIAL_HEAP_PAGES: usize = 16; // 1MB
+
+    // Heap management
     var heap_base: [*]u8 = undefined;
     var heap_end: [*]u8 = undefined;
     var heap_ptr: [*]u8 = undefined;
     var heap_initialized: bool = false;
 
-    fn alloc(len: usize) ?[*]u8 {
+    // Shared buffer for host communication
+    var shared_buffer: []u8 = &.{};
+    var shared_buffer_capacity: usize = 0;
+    var shared_buffer_len: usize = 0;
+
+    // Plugin state
+    var file_path: []u8 = &.{};
+    var override_config: []u8 = &.{};
+    var formatted_output: []u8 = &.{};
+    var error_message: []u8 = &.{};
+    var original_source: []u8 = &.{};
+
+    // Config registry (supports up to 16 concurrent configs)
+    const MAX_CONFIGS: usize = 16;
+    var config_registered: [MAX_CONFIGS]bool = [_]bool{false} ** MAX_CONFIGS;
+
+    // -------------------------------------------------------------------------
+    // Heap Allocator
+    // -------------------------------------------------------------------------
+
+    fn initHeap() void {
+        const current_pages = @wasmMemorySize(0);
+        heap_base = @ptrFromInt(current_pages * WASM_PAGE_SIZE);
+        heap_end = heap_base;
+        heap_ptr = heap_base;
+
+        // Grow initial heap
+        _ = @wasmMemoryGrow(0, INITIAL_HEAP_PAGES);
+        heap_end = @ptrFromInt(@intFromPtr(heap_base) + INITIAL_HEAP_PAGES * WASM_PAGE_SIZE);
+    }
+
+    fn ensureInitialized() void {
+        if (!heap_initialized) {
+            initHeap();
+            heap_initialized = true;
+        }
+    }
+
+    fn allocRaw(len: usize) ?[*]u8 {
         const aligned_len = (len + 7) & ~@as(usize, 7); // 8-byte alignment
-        const current: [*]u8 = heap_ptr;
-        const new_ptr: [*]u8 = @as([*]u8, @ptrFromInt(@intFromPtr(heap_ptr) + aligned_len));
+        const current = heap_ptr;
+        const new_ptr: [*]u8 = @ptrFromInt(@intFromPtr(heap_ptr) + aligned_len);
 
         if (@intFromPtr(new_ptr) > @intFromPtr(heap_end)) {
-            // Need more pages
-            const pages_needed: usize = (aligned_len + WASM_PAGE_SIZE - 1) / WASM_PAGE_SIZE;
-            const result: isize = @wasmMemoryGrow(0, pages_needed);
+            const pages_needed = (aligned_len + WASM_PAGE_SIZE - 1) / WASM_PAGE_SIZE;
+            const result = @wasmMemoryGrow(0, pages_needed);
             if (result == -1) return null;
-            heap_end = @as([*]u8, @ptrFromInt(@intFromPtr(heap_end) + pages_needed * WASM_PAGE_SIZE));
+            heap_end = @ptrFromInt(@intFromPtr(heap_end) + pages_needed * WASM_PAGE_SIZE);
         }
 
         heap_ptr = new_ptr;
@@ -77,35 +169,16 @@ const wasm: type = if (is_wasm) struct {
     }
 
     fn allocSlice(len: usize) ?[]u8 {
-        const ptr = alloc(len) orelse return null;
+        const ptr = allocRaw(len) orelse return null;
         return ptr[0..len];
     }
 
-    fn initHeap() void {
-        const pages = @wasmMemorySize(0);
-        heap_base = @as([*]u8, @ptrFromInt(pages * WASM_PAGE_SIZE));
-        heap_end = heap_base;
-        heap_ptr = heap_base;
+    // -------------------------------------------------------------------------
+    // Shared Buffer Operations
+    // -------------------------------------------------------------------------
 
-        // Grow initial pages
-        _ = @wasmMemoryGrow(0, 16); // 1MB initial heap
-        heap_end = @as([*]u8, @ptrFromInt(@intFromPtr(heap_base) + 16 * WASM_PAGE_SIZE));
-    }
-
-    fn ensureHeapInitialized() void {
-        if (!heap_initialized) {
-            initHeap();
-            heap_initialized = true;
-        }
-    }
-
-    // Shared Buffer (for host communication)
-    var shared_buffer: []u8 = &.{};
-    var shared_buffer_capacity: usize = 0;
-    var shared_buffer_len: usize = 0; // actual content length
-
-    fn ensureSharedBufferCapacity(size: usize) bool {
-        ensureHeapInitialized();
+    fn ensureBufferCapacity(size: usize) bool {
+        ensureInitialized();
         if (shared_buffer_capacity < size) {
             const new_buf = allocSlice(size) orelse return false;
             shared_buffer = new_buf;
@@ -114,260 +187,278 @@ const wasm: type = if (is_wasm) struct {
         return true;
     }
 
-    fn setSharedBuffer(data: []const u8) bool {
-        if (!ensureSharedBufferCapacity(data.len)) return false;
+    fn writeToBuffer(data: []const u8) bool {
+        if (!ensureBufferCapacity(data.len)) return false;
         @memcpy(shared_buffer[0..data.len], data);
         shared_buffer_len = data.len;
         return true;
     }
 
-    fn setSharedBufferLen(len: usize) void {
-        shared_buffer_len = len;
-    }
-
-    fn getSharedBufferContent() []u8 {
+    fn getBufferContent() []const u8 {
         return shared_buffer[0..shared_buffer_len];
     }
 
-    // Plugin State
-    var file_path_buf: []u8 = &.{};
-    var file_path_len: usize = 0;
-    var override_config_buf: []u8 = &.{};
-    var override_config_len: usize = 0;
+    fn getBufferPtr() WasmPtr {
+        ensureInitialized();
+        if (shared_buffer.len == 0) {
+            _ = ensureBufferCapacity(1024);
+        }
+        return shared_buffer.ptr;
+    }
 
-    var formatted_buf: []u8 = &.{};
-    var formatted_len: usize = 0;
+    fn clearBuffer(size: ByteLength) WasmPtr {
+        ensureInitialized();
+        if (!ensureBufferCapacity(size)) {
+            return shared_buffer.ptr;
+        }
+        @memset(shared_buffer[0..size], 0);
+        shared_buffer_len = size;
+        return shared_buffer.ptr;
+    }
 
-    var error_buf: []u8 = &.{};
-    var error_len: usize = 0;
+    // -------------------------------------------------------------------------
+    // Config Management
+    // -------------------------------------------------------------------------
 
-    var source_buf: []u8 = &.{};
-    var source_len: usize = 0;
+    fn registerConfig(config_id: ConfigId) void {
+        if (config_id < MAX_CONFIGS) {
+            config_registered[config_id] = true;
+        }
+    }
 
-    // Config storage (simple, just track if registered)
-    var config_registered: [16]bool = [_]bool{false} ** 16;
+    fn releaseConfig(config_id: ConfigId) void {
+        if (config_id < MAX_CONFIGS) {
+            config_registered[config_id] = false;
+        }
+    }
 
-    /// Format Zig source code. Returns true on success.
-    fn formatZigCode(source: []const u8) bool {
-        ensureHeapInitialized();
+    // -------------------------------------------------------------------------
+    // State Management
+    // -------------------------------------------------------------------------
 
-        // Use wasm allocator for std.zig.Ast (Zig 0.15+ API)
+    fn storeFilePath() void {
+        ensureInitialized();
+        const content = getBufferContent();
+        const buf = allocSlice(content.len) orelse return;
+        @memcpy(buf, content);
+        file_path = buf;
+    }
+
+    fn storeOverrideConfig() void {
+        ensureInitialized();
+        const content = getBufferContent();
+        const buf = allocSlice(content.len) orelse return;
+        @memcpy(buf, content);
+        override_config = buf;
+    }
+
+    fn setErrorMessage(msg: []const u8) void {
+        ensureInitialized();
+        const buf = allocSlice(msg.len) orelse return;
+        @memcpy(buf, msg);
+        error_message = buf;
+    }
+
+    // -------------------------------------------------------------------------
+    // Zig Formatter
+    // -------------------------------------------------------------------------
+
+    fn formatSource(source: []const u8) FormatResult {
+        ensureInitialized();
+
+        if (source.len == 0) {
+            return .no_change;
+        }
+
+        // Store original for comparison
+        const src_copy = allocSlice(source.len) orelse {
+            setErrorMessage("Out of memory");
+            return .@"error";
+        };
+        @memcpy(src_copy, source);
+        original_source = src_copy;
+
+        // Use std.heap.wasm_allocator for AST operations (Zig 0.15+ API)
         const allocator = std.heap.wasm_allocator;
 
-        // Create sentinel-terminated copy for the parser
+        // Create sentinel-terminated copy for parser
         const source_z = allocator.allocSentinel(u8, source.len, 0) catch {
-            setError("Out of memory");
-            return false;
+            setErrorMessage("Out of memory");
+            return .@"error";
         };
         defer allocator.free(source_z);
         @memcpy(source_z, source);
 
+        // Parse source
         var ast = std.zig.Ast.parse(allocator, source_z, .zig) catch {
-            setError("Failed to parse Zig source");
-            return false;
+            setErrorMessage("Failed to parse Zig source");
+            return .@"error";
         };
         defer ast.deinit(allocator);
 
         // Check for parse errors
         if (ast.errors.len > 0) {
-            setError("Parse error in Zig source");
-            return false;
+            setErrorMessage("Parse error in Zig source");
+            return .@"error";
         }
 
-        // Render formatted output (Zig 0.15+ API: renderAlloc)
+        // Render formatted output (Zig 0.15+ API)
         const rendered = ast.renderAlloc(allocator) catch {
-            setError("Failed to render formatted code");
-            return false;
+            setErrorMessage("Failed to render formatted code");
+            return .@"error";
         };
+        defer allocator.free(rendered);
 
-        // Store in formatted buffer
-        const new_buf = allocSlice(rendered.len) orelse {
-            setError("Out of memory");
-            allocator.free(rendered);
-            return false;
+        // Store formatted output
+        const output_buf = allocSlice(rendered.len) orelse {
+            setErrorMessage("Out of memory");
+            return .@"error";
         };
-        @memcpy(new_buf, rendered);
-        formatted_buf = new_buf;
-        formatted_len = rendered.len;
+        @memcpy(output_buf, rendered);
+        formatted_output = output_buf;
 
-        allocator.free(rendered);
-        return true;
+        // Check if content changed
+        if (rendered.len == original_source.len and
+            std.mem.eql(u8, original_source, rendered))
+        {
+            return .no_change;
+        }
+
+        return .changed;
     }
 
-    fn setError(msg: []const u8) void {
-        ensureHeapInitialized();
-        const buf = allocSlice(msg.len) orelse return;
-        @memcpy(buf, msg);
-        error_buf = buf;
-        error_len = msg.len;
+    fn getFormattedText() ByteLength {
+        if (formatted_output.len == 0) return 0;
+        if (!writeToBuffer(formatted_output)) return 0;
+        return @intCast(formatted_output.len);
     }
-} else struct {};
+
+    fn getErrorText() ByteLength {
+        if (error_message.len == 0) return 0;
+        if (!writeToBuffer(error_message)) return 0;
+        return @intCast(error_message.len);
+    }
+} else struct {
+    // Stub for non-wasm builds (allows tests to compile)
+};
 
 // =============================================================================
-// dprint Schema v4 Exports (wasm only)
+// dprint Schema v4 Exports
 // =============================================================================
 
-/// Returns 4 to indicate schema version 4 support
+/// Schema version marker - dprint checks for existence of this export
 export fn dprint_plugin_version_4() u32 {
     return 4;
 }
 
-/// Returns pointer to shared buffer for host communication
-export fn get_shared_bytes_ptr() [*]const u8 {
+/// Get pointer to shared memory buffer
+export fn get_shared_bytes_ptr() WasmPtr {
     if (comptime !is_wasm) return undefined;
-    wasm.ensureHeapInitialized();
-    if (wasm.shared_buffer.len == 0) {
-        _ = wasm.ensureSharedBufferCapacity(1024);
-    }
-    return wasm.shared_buffer.ptr;
+    return WasmRuntime.getBufferPtr();
 }
 
-/// Clears and resizes shared buffer, returns pointer
-export fn clear_shared_bytes(size: u32) [*]const u8 {
+/// Clear shared buffer and prepare for incoming data of given size
+export fn clear_shared_bytes(size: ByteLength) WasmPtr {
     if (comptime !is_wasm) return undefined;
-    wasm.ensureHeapInitialized();
-    if (!wasm.ensureSharedBufferCapacity(size)) {
-        return wasm.shared_buffer.ptr;
-    }
-    @memset(wasm.shared_buffer[0..size], 0);
-    wasm.setSharedBufferLen(size); // track actual content length
-    return wasm.shared_buffer.ptr;
+    return WasmRuntime.clearBuffer(size);
 }
 
-/// Returns plugin info as JSON, stores in shared buffer
-export fn get_plugin_info() u32 {
+/// Get plugin information as JSON
+export fn get_plugin_info() ByteLength {
     if (comptime !is_wasm) return 0;
-    if (!wasm.setSharedBuffer(PLUGIN_INFO)) return 0;
-    return PLUGIN_INFO.len;
+    if (!WasmRuntime.writeToBuffer(PLUGIN_INFO_JSON)) return 0;
+    return @intCast(PLUGIN_INFO_JSON.len);
 }
 
-/// Returns license text, stores in shared buffer
-export fn get_license_text() u32 {
+/// Get plugin license text
+export fn get_license_text() ByteLength {
     if (comptime !is_wasm) return 0;
-    if (!wasm.setSharedBuffer(LICENSE_TEXT)) return 0;
-    return LICENSE_TEXT.len;
+    if (!WasmRuntime.writeToBuffer(LICENSE_TEXT)) return 0;
+    return @intCast(LICENSE_TEXT.len);
 }
 
-/// Registers configuration from shared buffer
-export fn register_config(config_id: u32) void {
+/// Register a configuration
+export fn register_config(config_id: ConfigId) void {
     if (comptime !is_wasm) return;
-    if (config_id < 16) {
-        wasm.config_registered[config_id] = true;
-    }
+    WasmRuntime.registerConfig(config_id);
 }
 
-/// Releases configuration from memory
-export fn release_config(config_id: u32) void {
+/// Release a configuration
+export fn release_config(config_id: ConfigId) void {
     if (comptime !is_wasm) return;
-    if (config_id < 16) {
-        wasm.config_registered[config_id] = false;
-    }
+    WasmRuntime.releaseConfig(config_id);
 }
 
-/// Returns config diagnostics as JSON
-export fn get_config_diagnostics(_: u32) u32 {
+/// Get configuration diagnostics as JSON array
+export fn get_config_diagnostics(_: ConfigId) ByteLength {
     if (comptime !is_wasm) return 0;
-    const empty = "[]";
-    if (!wasm.setSharedBuffer(empty)) return 0;
-    return empty.len;
+    const empty_array = "[]";
+    if (!WasmRuntime.writeToBuffer(empty_array)) return 0;
+    return @intCast(empty_array.len);
 }
 
-/// Returns resolved configuration as JSON
-export fn get_resolved_config(_: u32) u32 {
+/// Get resolved configuration as JSON object
+export fn get_resolved_config(_: ConfigId) ByteLength {
     if (comptime !is_wasm) return 0;
-    const empty = "{}";
-    if (!wasm.setSharedBuffer(empty)) return 0;
-    return empty.len;
+    const empty_object = "{}";
+    if (!WasmRuntime.writeToBuffer(empty_object)) return 0;
+    return @intCast(empty_object.len);
 }
 
-/// Takes file path from shared buffer and stores it
+/// Store file path from shared buffer
 export fn set_file_path() void {
     if (comptime !is_wasm) return;
-    wasm.ensureHeapInitialized();
-    const len = wasm.shared_buffer.len;
-    const buf = wasm.allocSlice(len) orelse return;
-    @memcpy(buf, wasm.shared_buffer[0..len]);
-    wasm.file_path_buf = buf;
-    wasm.file_path_len = len;
+    WasmRuntime.storeFilePath();
 }
 
-/// Takes override config from shared buffer
+/// Store override configuration from shared buffer
 export fn set_override_config() void {
     if (comptime !is_wasm) return;
-    wasm.ensureHeapInitialized();
-    const len = wasm.shared_buffer.len;
-    const buf = wasm.allocSlice(len) orelse return;
-    @memcpy(buf, wasm.shared_buffer[0..len]);
-    wasm.override_config_buf = buf;
-    wasm.override_config_len = len;
+    WasmRuntime.storeOverrideConfig();
 }
 
-/// Format the file. Returns: 0=no change, 1=changed, 2=error
-export fn format(_: u32) u32 {
-    if (comptime !is_wasm) return 0;
-    wasm.ensureHeapInitialized();
-
-    // Source is in shared_buffer with length tracked by clear_shared_bytes
-    const source = wasm.getSharedBufferContent();
-    const src_len = source.len;
-
-    if (src_len == 0) {
-        return 0; // empty file, no change
-    }
-
-    // Store source for comparison
-    const src_copy = wasm.allocSlice(src_len) orelse {
-        wasm.setError("Out of memory");
-        return 2;
-    };
-    @memcpy(src_copy, source);
-    wasm.source_buf = src_copy;
-    wasm.source_len = src_len;
-
-    if (!wasm.formatZigCode(src_copy)) {
-        return 2; // error
-    }
-
-    // Check if content changed
-    if (wasm.formatted_len == src_len) {
-        if (std.mem.eql(u8, wasm.source_buf[0..wasm.source_len], wasm.formatted_buf[0..wasm.formatted_len])) {
-            return 0; // no change
-        }
-    }
-
-    return 1; // changed
+/// Format the source code in shared buffer
+export fn format(_: ConfigId) FormatResult {
+    if (comptime !is_wasm) return .no_change;
+    const source = WasmRuntime.getBufferContent();
+    return WasmRuntime.formatSource(source);
 }
 
-/// Returns formatted text length, stores in shared buffer
-export fn get_formatted_text() u32 {
+/// Get formatted text (call after format returns .changed)
+export fn get_formatted_text() ByteLength {
     if (comptime !is_wasm) return 0;
-    if (wasm.formatted_len == 0) return 0;
-    if (!wasm.setSharedBuffer(wasm.formatted_buf[0..wasm.formatted_len])) return 0;
-    return @intCast(wasm.formatted_len);
+    return WasmRuntime.getFormattedText();
 }
 
-/// Returns error text length, stores in shared buffer
-export fn get_error_text() u32 {
+/// Get error text (call after format returns .error)
+export fn get_error_text() ByteLength {
     if (comptime !is_wasm) return 0;
-    if (wasm.error_len == 0) return 0;
-    if (!wasm.setSharedBuffer(wasm.error_buf[0..wasm.error_len])) return 0;
-    return @intCast(wasm.error_len);
+    return WasmRuntime.getErrorText();
 }
 
-/// Returns config file matching patterns as JSON
-export fn get_config_file_matching(_: u32) u32 {
+/// Get file matching info for this config
+export fn get_config_file_matching(_: ConfigId) ByteLength {
     if (comptime !is_wasm) return 0;
-    // Return file matching info (extensions/names the plugin handles)
-    const file_matching =
-        \\{"fileExtensions":["zig","zon"],"fileNames":[]}
-    ;
-    if (!wasm.setSharedBuffer(file_matching)) return 0;
-    return file_matching.len;
+    if (!WasmRuntime.writeToBuffer(FILE_MATCHING_JSON)) return 0;
+    return @intCast(FILE_MATCHING_JSON.len);
 }
 
 // =============================================================================
-// Tests (native only)
+// Tests (native target only)
 // =============================================================================
+
+test "PluginInfo JSON generation" {
+    const json = comptime plugin_info.toJson();
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"dprint-plugin-zig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"version\":\"0.1.0\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"configKey\":\"zig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"fileExtensions\":[\"zig\",\"zon\"]") != null);
+}
+
+test "FileMatchingInfo JSON generation" {
+    const json = comptime file_matching_info.toJson();
+    try std.testing.expectEqualStrings("{\"fileExtensions\":[\"zig\",\"zon\"],\"fileNames\":[]}", json);
+}
 
 test "format simple zig code" {
     const allocator = std.testing.allocator;
@@ -393,4 +484,9 @@ test "format function" {
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.indexOf(u8, result, "fn foo() void {") != null);
+}
+
+test "LICENSE file embedded" {
+    try std.testing.expect(std.mem.indexOf(u8, LICENSE_TEXT, "MIT License") != null);
+    try std.testing.expect(std.mem.indexOf(u8, LICENSE_TEXT, "Kaj Kowalski") != null);
 }

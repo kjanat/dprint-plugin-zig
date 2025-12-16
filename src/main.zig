@@ -66,6 +66,7 @@ fn buildParseErrorMessage(
     allocator: std.mem.Allocator,
     source: []const u8,
     file_path: []const u8,
+    token_starts: []const u32,
     errors: []const std.zig.Ast.Error,
 ) ![]u8 {
     var list = std.ArrayList(u8).initCapacity(allocator, errors.len * 32) catch return error.OutOfMemory;
@@ -79,7 +80,9 @@ fn buildParseErrorMessage(
         if (idx != 0) {
             try writer.writeAll("\n");
         }
-        const pos = computeLineColumn(source, parse_error.token); // token index approximates location
+        const token_index = parse_error.token;
+        const offset: usize = if (token_index < token_starts.len) @intCast(token_starts[token_index]) else 0;
+        const pos = computeLineColumn(source, offset);
         try writer.print("{s}:{d}:{d}: {s}", .{ path, pos.line, pos.column, @tagName(parse_error.tag) });
         idx += 1;
     }
@@ -394,7 +397,7 @@ const WasmRuntime = if (is_wasm) struct {
 
         // Check for parse errors
         if (ast.errors.len > 0) {
-            const msg = buildParseErrorMessage(allocator, source, file_path, ast.errors) catch {
+            const msg = buildParseErrorMessage(allocator, source, file_path, ast.tokens.items(.start), ast.errors) catch {
                 setErrorMessage("Parse error in source");
                 return .@"error";
             };
@@ -715,7 +718,7 @@ test "buildParseErrorMessage reports line and column" {
     var ast = try std.zig.Ast.parse(allocator, src, .zig);
     defer ast.deinit(allocator);
     try std.testing.expect(ast.errors.len > 0);
-    const msg = try buildParseErrorMessage(allocator, src, "main.zig", ast.errors);
+    const msg = try buildParseErrorMessage(allocator, src, "main.zig", ast.tokens.items(.start), ast.errors);
     defer allocator.free(msg);
     try std.testing.expect(std.mem.indexOf(u8, msg, "main.zig:1:") != null);
 }

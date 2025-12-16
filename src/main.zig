@@ -35,6 +35,74 @@ const FormatResult = enum(u32) {
     @"error" = 2,
 };
 
+fn resolveModeFromPath(file_path: []const u8) std.zig.Ast.Mode {
+    if (std.mem.endsWith(u8, file_path, ".zon")) {
+        return .zon;
+    }
+    return .zig;
+}
+
+const Position = struct {
+    line: usize,
+    column: usize,
+};
+
+fn computeLineColumn(source: []const u8, offset: usize) Position {
+    var line: usize = 1;
+    var column: usize = 1;
+    var i: usize = 0;
+    while (i < source.len and i < offset) : (i += 1) {
+        if (source[i] == '\n') {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    return .{ .line = line, .column = column };
+}
+
+fn buildParseErrorMessage(
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    file_path: []const u8,
+    errors: []const std.zig.Ast.Error,
+) ![]u8 {
+    var list = std.ArrayList(u8).initCapacity(allocator, errors.len * 32) catch return error.OutOfMemory;
+    defer list.deinit(allocator);
+
+    const path = if (file_path.len > 0) file_path else "<unknown>";
+
+    var idx: usize = 0;
+    var writer = list.writer(allocator);
+    for (errors) |parse_error| {
+        if (idx != 0) {
+            try writer.writeAll("\n");
+        }
+        const pos = computeLineColumn(source, parse_error.token); // token index approximates location
+        try writer.print("{s}:{d}:{d}: {s}", .{ path, pos.line, pos.column, @tagName(parse_error.tag) });
+        idx += 1;
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+
+fn diagnosticsForConfig(bytes: []const u8, allocator: std.mem.Allocator) []const u8 {
+    const empty_array = "[]";
+    const invalid_json = "[\"Invalid JSON override config\"]";
+    const unknown = "[\"Unknown configuration properties are not supported\"]";
+
+    if (bytes.len == 0) return empty_array;
+
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, bytes, .{}) catch return invalid_json;
+    defer parsed.deinit();
+
+    return switch (parsed.value) {
+        .object => |obj| if (obj.count() == 0) empty_array else unknown,
+        else => unknown,
+    };
+}
+
 // =============================================================================
 // Comptime JSON Serialization
 // =============================================================================
@@ -185,6 +253,8 @@ const WasmRuntime = if (is_wasm) struct {
 
     fn ensureBufferCapacity(size: usize) bool {
         ensureInitialized();
+        const max_size: usize = 8 * 1024 * 1024; // 8MB guard
+        if (size > max_size) return false;
         if (shared_buffer_capacity < size) {
             const new_buf = allocSlice(size) orelse return false;
             shared_buffer = new_buf;
@@ -222,6 +292,10 @@ const WasmRuntime = if (is_wasm) struct {
         return shared_buffer.ptr;
     }
 
+    fn clearPerConfigState() void {
+        override_config = &.{};
+    }
+
     // -------------------------------------------------------------------------
     // Config Management
     // -------------------------------------------------------------------------
@@ -236,6 +310,7 @@ const WasmRuntime = if (is_wasm) struct {
         if (config_id < MAX_CONFIGS) {
             config_registered[config_id] = false;
         }
+        clearPerConfigState();
     }
 
     // -------------------------------------------------------------------------
@@ -245,6 +320,9 @@ const WasmRuntime = if (is_wasm) struct {
     fn storeFilePath() void {
         ensureInitialized();
         const content = getBufferContent();
+        if (file_path.len != 0) {
+            file_path = &.{};
+        }
         const buf = allocSlice(content.len) orelse return;
         @memcpy(buf, content);
         file_path = buf;
@@ -253,6 +331,9 @@ const WasmRuntime = if (is_wasm) struct {
     fn storeOverrideConfig() void {
         ensureInitialized();
         const content = getBufferContent();
+        if (override_config.len != 0) {
+            override_config = &.{};
+        }
         const buf = allocSlice(content.len) orelse return;
         @memcpy(buf, content);
         override_config = buf;
@@ -260,8 +341,14 @@ const WasmRuntime = if (is_wasm) struct {
 
     fn setErrorMessage(msg: []const u8) void {
         ensureInitialized();
+        error_message = &.{};
         const buf = allocSlice(msg.len) orelse return;
         @memcpy(buf, msg);
+        error_message = buf;
+    }
+
+    fn setErrorMessageOwned(buf: []u8) void {
+        ensureInitialized();
         error_message = buf;
     }
 
@@ -271,6 +358,7 @@ const WasmRuntime = if (is_wasm) struct {
 
     fn formatSource(source: []const u8) FormatResult {
         ensureInitialized();
+        resetPerRequestState();
 
         if (source.len == 0) {
             return .no_change;
@@ -295,16 +383,22 @@ const WasmRuntime = if (is_wasm) struct {
         defer allocator.free(source_z);
         @memcpy(source_z, source);
 
+        const mode = resolveModeFromPath(file_path);
+
         // Parse source
-        var ast = std.zig.Ast.parse(allocator, source_z, .zig) catch {
-            setErrorMessage("Failed to parse Zig source");
+        var ast = std.zig.Ast.parse(allocator, source_z, mode) catch {
+            setErrorMessage("Failed to parse source");
             return .@"error";
         };
         defer ast.deinit(allocator);
 
         // Check for parse errors
         if (ast.errors.len > 0) {
-            setErrorMessage("Parse error in Zig source");
+            const msg = buildParseErrorMessage(allocator, source, file_path, ast.errors) catch {
+                setErrorMessage("Parse error in source");
+                return .@"error";
+            };
+            setErrorMessageOwned(msg);
             return .@"error";
         }
 
@@ -343,6 +437,12 @@ const WasmRuntime = if (is_wasm) struct {
         if (error_message.len == 0) return 0;
         if (!writeToBuffer(error_message)) return 0;
         return @intCast(error_message.len);
+    }
+
+    fn resetPerRequestState() void {
+        formatted_output = &.{};
+        error_message = &.{};
+        original_source = &.{};
     }
 } else struct {
     // Stub for non-wasm builds (allows tests to compile)
@@ -398,9 +498,12 @@ export fn release_config(config_id: ConfigId) void {
 /// Get configuration diagnostics as JSON array
 export fn get_config_diagnostics(_: ConfigId) ByteLength {
     if (comptime !is_wasm) return 0;
-    const empty_array = "[]";
-    if (!WasmRuntime.writeToBuffer(empty_array)) return 0;
-    return @intCast(empty_array.len);
+
+    const buf = WasmRuntime.getBufferContent();
+    const allocator = std.heap.wasm_allocator;
+    const diag = diagnosticsForConfig(buf, allocator);
+    if (!WasmRuntime.writeToBuffer(diag)) return 0;
+    return @intCast(diag.len);
 }
 
 /// Get resolved configuration as JSON object
@@ -423,11 +526,24 @@ export fn set_override_config() void {
     WasmRuntime.storeOverrideConfig();
 }
 
+/// Check config updates (not supported, return empty JSON array)
+export fn check_config_updates() ByteLength {
+    if (comptime !is_wasm) return 0;
+    const empty_array = "[]";
+    if (!WasmRuntime.writeToBuffer(empty_array)) return 0;
+    return @intCast(empty_array.len);
+}
+
 /// Format the source code in shared buffer
 export fn format(_: ConfigId) FormatResult {
     if (comptime !is_wasm) return .no_change;
     const source = WasmRuntime.getBufferContent();
     return WasmRuntime.formatSource(source);
+}
+
+/// Range format is not supported; delegates to full format
+export fn format_range(config_id: ConfigId, _: u32, _: u32) FormatResult {
+    return format(config_id);
 }
 
 /// Get formatted text (call after format returns .changed)
@@ -452,6 +568,21 @@ export fn get_config_file_matching(_: ConfigId) ByteLength {
 // =============================================================================
 // Tests (native target only)
 // =============================================================================
+
+const zig_formatted_fixture =
+    \\const std = @import("std");
+    \\pub fn add(a: i32, b: i32) i32 {
+    \\    return a + b;
+    \\}
+    \\
+;
+
+const zig_unformatted_fixture = "const std=@import(\"std\");pub fn add(a:i32,b:i32)i32{return a+b;}";
+const zig_invalid_fixture = "pub fn main() { let = 1; }";
+
+const zon_formatted_fixture = ".{ .name = \"zig\", .values = .{ 1, 2, 3 } }\n";
+const zon_unformatted_fixture = ".{.name=\"zig\",.values=.{1,2,3}}";
+const zon_invalid_fixture = ".{ .name = \"zig\", .values = .{ 1, 2, 3 }";
 
 test "PluginInfo JSON is valid and contains required fields" {
     const json = PLUGIN_INFO_JSON;
@@ -485,7 +616,7 @@ test "FileMatchingInfo JSON is valid and contains required fields" {
 
 test "format simple zig code" {
     const allocator = std.testing.allocator;
-    const input = "const x=1;";
+    const input = zig_formatted_fixture;
 
     var ast = try std.zig.Ast.parse(allocator, input, .zig);
     defer ast.deinit(allocator);
@@ -493,7 +624,7 @@ test "format simple zig code" {
     const result = try ast.renderAlloc(allocator);
     defer allocator.free(result);
 
-    try std.testing.expectEqualStrings("const x = 1;\n", result);
+    try std.testing.expectEqualStrings(zig_formatted_fixture, result);
 }
 
 test "format function" {
@@ -509,6 +640,51 @@ test "format function" {
     try std.testing.expect(std.mem.indexOf(u8, result, "fn foo() void {") != null);
 }
 
+test "format zon fixture" {
+    const allocator = std.testing.allocator;
+    const input = zon_formatted_fixture;
+    var ast = try std.zig.Ast.parse(allocator, input, .zon);
+    defer ast.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+    const result = try ast.renderAlloc(allocator);
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings(zon_formatted_fixture, result);
+}
+
+test "zig unformatted becomes formatted" {
+    const allocator = std.testing.allocator;
+    var ast = try std.zig.Ast.parse(allocator, zig_unformatted_fixture, .zig);
+    defer ast.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+    const result = try ast.renderAlloc(allocator);
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings(zig_formatted_fixture, result);
+}
+
+test "zon unformatted becomes formatted" {
+    const allocator = std.testing.allocator;
+    var ast = try std.zig.Ast.parse(allocator, zon_unformatted_fixture, .zon);
+    defer ast.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), ast.errors.len);
+    const result = try ast.renderAlloc(allocator);
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings(zon_formatted_fixture, result);
+}
+
+test "zig invalid produces parse errors" {
+    const allocator = std.testing.allocator;
+    var ast = try std.zig.Ast.parse(allocator, zig_invalid_fixture, .zig);
+    defer ast.deinit(allocator);
+    try std.testing.expect(ast.errors.len > 0);
+}
+
+test "zon invalid produces parse errors" {
+    const allocator = std.testing.allocator;
+    var ast = try std.zig.Ast.parse(allocator, zon_invalid_fixture, .zon);
+    defer ast.deinit(allocator);
+    try std.testing.expect(ast.errors.len > 0);
+}
+
 test "LICENSE file embedded" {
     try std.testing.expect(std.mem.indexOf(u8, LICENSE_TEXT, "MIT License") != null);
     try std.testing.expect(std.mem.indexOf(u8, LICENSE_TEXT, "Kaj Kowalski") != null);
@@ -518,4 +694,28 @@ test "FormatResult enum values match dprint spec" {
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(FormatResult.no_change));
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(FormatResult.changed));
     try std.testing.expectEqual(@as(u32, 2), @intFromEnum(FormatResult.@"error"));
+}
+
+test "resolveModeFromPath chooses zon for .zon" {
+    try std.testing.expectEqual(std.zig.Ast.Mode.zon, resolveModeFromPath("file.zon"));
+    try std.testing.expectEqual(std.zig.Ast.Mode.zig, resolveModeFromPath("file.zig"));
+}
+
+test "diagnosticsForConfig handles empty, invalid, and unknown" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectEqualStrings("[]", diagnosticsForConfig("", allocator));
+    try std.testing.expectEqualStrings("[\"Invalid JSON override config\"]", diagnosticsForConfig("{", allocator));
+    try std.testing.expectEqualStrings("[\"Unknown configuration properties are not supported\"]", diagnosticsForConfig("{\"x\":1}", allocator));
+    try std.testing.expectEqualStrings("[]", diagnosticsForConfig("{}", allocator));
+}
+
+test "buildParseErrorMessage reports line and column" {
+    const allocator = std.testing.allocator;
+    const src = "const =";
+    var ast = try std.zig.Ast.parse(allocator, src, .zig);
+    defer ast.deinit(allocator);
+    try std.testing.expect(ast.errors.len > 0);
+    const msg = try buildParseErrorMessage(allocator, src, "main.zig", ast.errors);
+    defer allocator.free(msg);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "main.zig:1:") != null);
 }

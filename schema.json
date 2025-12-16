@@ -3,7 +3,7 @@
   "$id": "https://plugins.dprint.dev/kjanat/zig/schema.json",
   "type": "object",
   "title": "dprint-plugin-zig Configuration",
-  "description": "Configuration for the Zig formatting plugin. Currently uses Zig's default formatting rules.",
+  "description": "Zig formatter plugin has no configurable options; Zig enforces a single canonical style.",
   "properties": {},
   "additionalProperties": false
 }
